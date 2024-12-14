@@ -1,9 +1,8 @@
 # vim: ft=dockerfile tw=78 ts=4 sw=4 et
 
 # Supported Debian base images
-#   - stretch
-#   - jessie
-ARG MERCURY_DEPEND_TAG=stretch
+#   - bookworm
+ARG MERCURY_DEPEND_TAG=bookworm
 ARG MERCURY_DEV_PREFIX=/usr/local/mercury
 ARG MERCURY_DEV_TARGET=/var/tmp/mercury
 
@@ -18,8 +17,9 @@ RUN apt-get update && apt-get install -y \
 
 FROM base AS bootstrap
 
-ARG MERCURY_BOOTSTRAP=y
-ARG MERCURY_DL=http://dl.mercurylang.org/deb/
+ARG MERCURY_BOOTSTRAP_IMAGE=docker.io/wkarpiel/mercury:latest
+ARG MERCURY_BOOTSTRAP_PREFIX=/usr/local/mercury
+
 ARG MERCURY_DEV_DEFAULT_GRADE=asm_fast.gc
 ARG MERCURY_DEV_LIBGRADES=${MERCURY_DEV_DEFAULT_GRADE}
 ARG MERCURY_DEV_PARALLEL=-j3
@@ -33,28 +33,17 @@ ARG MERCURY_DEV_TARGET
 ENV APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE y
 
 # install packaged compiler for bootstrapping
-# first install curl and lsb-realse so we can add the public key for downloading
-# Mercury packages.
-# Then add the remote repository and install all packages required for building
-# the Mercury compiler from source.
 RUN ( echo 'debconf debconf/frontend select Noninteractive' \
         | debconf-set-selections ) && \
     apt-get update && apt-get install -y \
         bison \
         flex \
-        $([ "$MERCURY_BOOTSTRAP" != "y" ] || \
-            echo autoconf automake curl gnupg2 lsb-release) && \
-    [ "${MERCURY_BOOTSTRAP}" != "y" ] || \
-        ( \
-            ( curl -fsSL https://paul.bone.id.au/paul.asc | apt-key add - ) && \
-            printf "%s $MERCURY_DL $(lsb_release -cs) main\n" "deb" "deb-src" \
-                > /etc/apt/sources.list.d/mercury.list && \
-            apt-get update && apt-get install -y \
-                mercury-rotd-recommended \
-        )
+        automake
 
 WORKDIR $MERCURY_DEV_TARGET
 COPY ${MERCURY_DEV_SOURCE} .
+COPY --from=${MERCURY_BOOTSTRAP_IMAGE} ${MERCURY_BOOTSTRAP_PREFIX} ${MERCURY_BOOTSTRAP_PREFIX}
+ENV PATH ${MERCURY_BOOTSTRAP_PREFIX}/bin:$PATH
 
 # Checking for configure enables using
 #   - `docker build http://uri.to.bootstrapped.tar.gz',
@@ -69,7 +58,9 @@ RUN ( \
             --with-default-grade=$MERCURY_DEFAULT_GRADE \
             --prefix=$MERCURY_DEV_PREFIX \
             --disable-symlinks \
-        && make PARALLEL=$MERCURY_DEV_PARALLEL install \
+        && make PARALLEL=$MERCURY_DEV_PARALLEL \
+        && rm -rf $MERCURY_BOOTSTRAP_PREFIX \
+        && make install \
         && rm -fR ${MERCURY_BOOTSTRAP_TARGET} \
         && rm -fR $MERCURY_DEV_TARGET \
     )
